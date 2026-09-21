@@ -1,5 +1,17 @@
 # Revised Plan: One Binary, Files Only
 
+## UI direction (supersedes "minimal / no JS" styling rules)
+
+The **color palette is settled** — warm off-white editorial monochrome with a restrained dark mode. But the interface should **not be minimal**:
+
+- Go for **rich detail**: layered typography, texture, iconography, micro-interactions, generous but composed layouts
+- **External libraries are allowed** (fonts, icon sets, CSS frameworks, JS libraries, build tooling)
+- **Another language is allowed** — the frontend may be rewritten (e.g. TypeScript + a framework)
+- **Separate FE/BE is allowed** — a standalone frontend app talking to a backend API is fine
+- What must not change: single user, the `data/` storage formats, one-folder backup
+
+The constraints below describe the original stdlib-only starting point; treat them as backend invariants, not frontend restrictions.
+
 ## Concept
 
 Single `main.go` (Go, stdlib only) — routes, HTML templates, and logic in one file. Templates embedded with `go:embed`, so the whole app is **one binary + one `data/` folder**. No API, no JSON — plain HTML forms, POST → redirect. Works with zero JavaScript.

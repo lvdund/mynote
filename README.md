@@ -11,7 +11,9 @@ Everything lives under one data directory — back up that directory and you hav
 - **Self-chat** — append-only JSONL log; latest 200 messages shown
 - **Auth** — single account, PBKDF2-HMAC-SHA256 (600k iterations), signed HMAC session cookies, CSRF-protected forms, failed-login delay
 - **Account settings** — change username/password (invalidates all old sessions)
-- Server-rendered HTML + CSS only, responsive, dark-mode aware
+- Frontend — a letterpress-inspired editorial interface (Fraunces / Newsreader / Spline Sans Mono, paper grain, ink-inversion hovers, crop-mark cards) with a persistent light/dark "night edition" theme toggle. No-JS-first: every feature works without JavaScript; fonts come from Google Fonts with graceful local fallbacks when offline
+
+> **UI direction (updated):** the monochrome editorial color palette is right, but the interface should **not be minimal** — and now it isn't: the design is a "private press" letterpress aesthetic (masthead + double rules, folio-numbered navigation, numbered note index with dotted leaders, manuscript editor on ruled paper, job-ticket checklists with progress rules, a colophon settings page, and a newspaper-front-page login). External frontend libraries (fonts, icons, CSS/tooling, JS frameworks) are allowed; serving JavaScript is allowed; rewriting the frontend in another language and splitting frontend/backend into separate apps is allowed if it serves the design. The backend storage model and data directory layout stay as the contract.
 
 ## Configuration (environment variables)
 
@@ -79,4 +81,6 @@ go vet ./...
 
 ## Scope
 
-Single account, single process, served at the URL root, TLS terminated by a reverse proxy. No file uploads, no multi-user, no APIs, no JavaScript, no Markdown-to-HTML rendering (bodies render as escaped plain text). One process per data directory — replicas are unsupported.
+Single account, single process, served at the URL root, TLS terminated by a reverse proxy. No file uploads, no multi-user, no Markdown-to-HTML rendering (bodies render as escaped plain text). One process per data directory — replicas are unsupported.
+
+**Relaxed for the frontend:** JavaScript, external libraries, and richer detail are now allowed. A separate frontend (SPA in another language/framework talking to a backend API) is acceptable. The invariants that remain: single account, the `data/` directory storage formats, and the backup story.

@@ -607,183 +607,106 @@ func (s *store) loadChat(n int) ([]chatMessage, error) {
 //go:embed assets.css
 var cssFS embed.FS
 
-var pageTmpl = template.Must(template.New("page").Parse(`<!DOCTYPE html>
+// wordCount counts whitespace-separated words in s.
+func wordCount(s string) int { return len(strings.Fields(s)) }
+
+// doneCount returns how many checklist items are marked done.
+func doneCount(items []checklistItem) int {
+	n := 0
+	for _, it := range items {
+		if it.Done {
+			n++
+		}
+	}
+	return n
+}
+
+// itemPct returns the done percentage of items, e.g. "57%".
+func itemPct(items []checklistItem) string {
+	if len(items) == 0 {
+		return "0%"
+	}
+	return fmt.Sprintf("%d%%", 100*doneCount(items)/len(items))
+}
+
+// tmplFuncs are small presentation helpers for the page templates.
+var tmplFuncs = template.FuncMap{
+	"inc":       func(i int) int { return i + 1 },
+	"wordcount": wordCount,
+	"donecount": doneCount,
+	"pct":       itemPct,
+}
+
+var pageTmpl = template.Must(template.New("page").Funcs(tmplFuncs).Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}} · mynote</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&amp;family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&amp;family=Spline+Sans+Mono:ital,wght@0,400..700;1,400..700&amp;display=swap">
 <style>{{.CSS}}</style>
 </head>
-<body>
-<header>
-<nav>
-<a href="/notes" class="brand"><span class="brand-mark"></span>mynote</a>
-<a href="/notes">Notes</a>
-<a href="/checklists">Checklists</a>
-<a href="/chat">Chat</a>
-<a href="/settings">Settings</a>
+<body onload='try{var t=localStorage.getItem("mynote-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;var b=document.querySelector("[data-theme-toggle]"),d=(document.documentElement.dataset.theme||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"))==="dark";if(b){b.setAttribute("aria-pressed",d);b.setAttribute("aria-label",d?"Use light mode":"Use dark mode");b.lastElementChild.textContent=d?"Light":"Dark"}}catch(e){}'>
+<div class="grain" aria-hidden="true"></div>
+<header class="masthead">
+<nav aria-label="Primary navigation">
+<a href="/notes" class="brand"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M4.9 19.1 19.1 4.9"/></svg>mynote<span class="brand-dot">.</span></a>
+<a href="/notes" class="folio" {{if eq .Section "notes"}}aria-current="page"{{end}}><span class="no" aria-hidden="true">01</span>Notes</a>
+<a href="/checklists" class="folio" {{if eq .Section "checklists"}}aria-current="page"{{end}}><span class="no" aria-hidden="true">02</span>Lists</a>
+<a href="/chat" class="folio" {{if eq .Section "chat"}}aria-current="page"{{end}}><span class="no" aria-hidden="true">03</span>Chat</a>
+<a href="/settings" class="folio" {{if eq .Section "settings"}}aria-current="page"{{end}}><span class="no" aria-hidden="true">04</span>Colophon</a>
 <form method="post" action="/logout" class="inline nav-logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit" class="linklike">Log out</button></form>
+<button class="theme-toggle" type="button" data-theme-toggle onclick='try{var d=(document.documentElement.dataset.theme||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"))==="dark",t=d?"light":"dark";document.documentElement.dataset.theme=t;localStorage.setItem("mynote-theme",t);this.setAttribute("aria-pressed",!d);this.setAttribute("aria-label",d?"Use light mode":"Use dark mode");this.lastElementChild.textContent=d?"Dark":"Light"}catch(e){}' aria-label="Toggle dark mode" aria-pressed="false"><span aria-hidden="true">◐</span><span class="tt-label">Theme</span></button>
 </nav>
+<div class="mast-rule" aria-hidden="true"></div>
 </header>
-<main>
-{{template "content" .}}
-</main>
+<main id="main" class="page">{{template "content" .}}</main>
+<footer class="site-foot"><p>mynote · a private press <span class="orn" aria-hidden="true">❦</span> set in fraunces, newsreader &amp; spline sans mono <span class="orn" aria-hidden="true">❦</span> everything you write lives in one folder</p></footer>
 </body>
-</html>
-`))
+</html>`))
 
-var loginTmpl = template.Must(template.New("page").Funcs(template.FuncMap{"safeCSS": func(s string) template.CSS { return template.CSS(s) }}).Parse(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Log in · mynote</title>
-<style>{{.CSS}}</style>
-</head>
-<body class="centered">
-<main class="login-shell">
-<section class="login-art"><a class="brand" href="/login"><span class="brand-mark"></span>mynote</a><div><h2>Your thoughts, in one place.</h2><p>A quiet, private space for notes, lists, and the things you want to remember.</p></div><div class="orbit" aria-hidden="true"></div></section>
-<section class="login-form">
-<p class="eyebrow">Private workspace</p><h1>Welcome back.</h1><p class="lede">Sign in to continue to your notes.</p>
-{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-<form method="post" action="/login">
-<label>Username <input name="username" autofocus autocomplete="username" required></label>
-<label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-<button type="submit">Log in</button>
-</form>
-</section>
-</main>
-</body>
-</html>
-`))
-
-var tmplFuncs = template.FuncMap{}
+var loginTmpl = template.Must(template.New("page").Parse(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}} · mynote</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&amp;family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&amp;family=Spline+Sans+Mono:ital,wght@0,400..700;1,400..700&amp;display=swap"><style>{{.CSS}}</style></head>
+<body class="centered" onload='try{var t=localStorage.getItem("mynote-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;var b=document.querySelector("[data-theme-toggle]"),d=(document.documentElement.dataset.theme||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"))==="dark";if(b){b.setAttribute("aria-pressed",d);b.setAttribute("aria-label",d?"Use light mode":"Use dark mode");b.lastElementChild.textContent=d?"Light":"Dark"}}catch(e){}'><div class="grain" aria-hidden="true"></div>
+<button class="theme-toggle login-theme" type="button" data-theme-toggle onclick='try{var d=(document.documentElement.dataset.theme||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"))==="dark",t=d?"light":"dark";document.documentElement.dataset.theme=t;localStorage.setItem("mynote-theme",t);this.setAttribute("aria-pressed",!d);this.setAttribute("aria-label",d?"Use light mode":"Use dark mode");this.lastElementChild.textContent=d?"Dark":"Light"}catch(e){}' aria-label="Toggle dark mode" aria-pressed="false"><span aria-hidden="true">◐</span><span class="tt-label">Theme</span></button>
+<main class="front-page"><header class="front-mast"><p class="front-edition">Private edition · Vol. I · {{.Date}}</p><h1 class="front-title">mynote<span class="front-dot">.</span></h1><p class="front-sub">A private place to think — notes, lists &amp; words to yourself</p></header>
+<div class="front-cols"><section class="front-manifesto"><p class="eyebrow"><span class="no">Est.</span> From the proprietor</p><p class="dropcap">Your thoughts deserve a quieter home than a stranger's server. mynote keeps every note, list, and half-finished idea in plain files on a machine you control.</p><p>No database, no tracking, no feed — just you, your words, and one folder you can back up in a single copy.</p><p class="front-orn" aria-hidden="true">⁂</p><svg class="drafting-art front-art" viewBox="0 0 220 220" aria-hidden="true"><path d="M32 188h156M61 166 108 42l47 124M78 121h60M108 42v124M47 188V74m122 114V74M32 74h30m96 0h30"/><circle cx="108" cy="42" r="10"/><path d="m43 82 8-8 8 8m110 0 8-8 8 8"/></svg></section>
+<section class="front-enter"><p class="eyebrow"><span class="no">No. 1</span> Subscribers' entrance</p><h2>Welcome back.</h2><p class="lede">Sign in to continue to your notes.</p>{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}<form method="post" action="/login"><label>Username <input name="username" autofocus autocomplete="username" required></label><label>Password <input name="password" type="password" autocomplete="current-password" required></label><button type="submit" class="btn wide">Log in</button></form><p class="muted enter-note">One reader · one account · no audience.</p></section></div>
+<footer class="front-foot"><p>printed by one small go binary <span class="orn" aria-hidden="true">❦</span> works without javascript</p></footer></main></body></html>`))
 
 var notesTmpl = mustSub(`{{define "content"}}
-<header class="page-head"><div><p class="eyebrow">Your workspace</p><h1>Notes</h1></div><p class="lede">Ideas, plans, and passing thoughts—kept private and close at hand.</p></header>
-<div class="toolbar">
-<form method="post" action="/notes/new" class="row">
-<input type="hidden" name="csrf" value="{{.CSRF}}">
-<input name="title" placeholder="New note title" maxlength="200" required>
-<button type="submit">Create</button>
-</form>
-<form method="get" action="/notes" class="row">
-<input name="q" value="{{.Query}}" placeholder="Search notes…">
-<button type="submit">Search</button>
-{{if .Query}}<a href="/notes" class="clear-link">Clear</a>{{end}}
-</form>
-</div>
-<div class="section-label"><h2>{{if .Query}}Search results{{else}}All notes{{end}}</h2><span>{{len .Notes}} entries</span></div>
-{{if not .Notes}}<p class="empty">No notes{{if .Query}} matching “{{.Query}}”{{end}}.</p>{{end}}
-<ul class="notes">
-{{range .Notes}}
-<li><a href="/notes/{{.ID}}">{{.Meta.Title}}{{if .Meta.Pinned}}<span class="pin">Pinned</span>{{end}}</a>
- <span class="muted">{{.ModTime.Format "2006-01-02 15:04"}}</span></li>
-{{end}}
-</ul>
+<section class="hero"><div class="hero-head"><p class="eyebrow"><span class="no">№ 01</span> The Commonplace Book</p><h1>Notes for<br>the making.</h1></div><div class="hero-side"><p class="lede">Ideas, plans, and passing thoughts — kept private, close at hand, and yours alone.</p><svg class="drafting-art" viewBox="0 0 220 220" aria-hidden="true"><path d="M32 188h156M61 166 108 42l47 124M78 121h60M108 42v124M47 188V74m122 114V74M32 74h30m96 0h30"/><circle cx="108" cy="42" r="10"/><path d="m43 82 8-8 8 8m110 0 8-8 8 8"/></svg></div></section>
+<section class="workspace"><aside class="rail"><p class="rail-label">Start a thought</p><form method="post" action="/notes/new"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>New note title <input name="title" placeholder="Give it a name" maxlength="200" required></label><button type="submit" class="btn">Create note</button></form><div class="rail-break"><span aria-hidden="true">✳</span></div><form method="get" action="/notes"><label>Find a note <input name="q" value="{{.Query}}" placeholder="Search notes…" type="search"></label><button type="submit" class="btn ghost">Search</button>{{if .Query}}<a href="/notes" class="clear-link">Clear search</a>{{end}}</form></aside>
+<div class="panel"><div class="panel-head"><h2>{{if .Query}}Search results{{else}}All notes{{end}}</h2><span class="count-tag">{{len .Notes}} entries</span></div>{{if not .Notes}}<div class="empty"><p class="empty-orn" aria-hidden="true">✳</p><p>No notes{{if .Query}} matching “{{.Query}}”{{end}}.</p><p class="hint">Begin with a small idea — it will grow.</p></div>{{end}}<ol class="notes-index">{{range $i, $n := .Notes}}<li><a href="/notes/{{$n.ID}}"><span class="entry-no" aria-hidden="true">{{printf "%02d" (inc $i)}}</span><span class="entry-title">{{$n.Meta.Title}}{{if $n.Meta.Pinned}}<span class="pin"><span aria-hidden="true">✱</span> pinned</span>{{end}}</span><span class="leader" aria-hidden="true"></span><time datetime="{{$n.ModTime.Format "2006-01-02T15:04"}}">{{$n.ModTime.Format "02 Jan 2006 · 15:04"}}</time></a></li>{{end}}</ol></div></section>
 {{end}}`)
 
 var noteTmpl = mustSub(`{{define "content"}}
-<header class="page-head"><div><p class="eyebrow">Note editor</p><h1>{{.Note.Meta.Title}}</h1></div><p class="lede">Write without distraction. Changes stay in your private workspace.</p></header>
-<section class="editor"><form method="post" action="/notes/{{.Note.ID}}/save">
-<input type="hidden" name="csrf" value="{{.CSRF}}">
-<label>Title <input name="title" value="{{.Note.Meta.Title}}" maxlength="200" required></label>
-<label class="check"><input type="checkbox" name="pinned" value="true" {{if .Note.Meta.Pinned}}checked{{end}}> Pinned</label>
-<textarea name="body" rows="20">{{.Note.Body}}</textarea>
-<button type="submit">Save</button>
-</form>
-<form method="post" action="/notes/{{.Note.ID}}/delete" class="danger">
-<input type="hidden" name="csrf" value="{{.CSRF}}">
-<button type="submit">Delete note</button>
-</form>
-</section>
+<section class="hero compact"><div class="hero-head"><p class="eyebrow"><span class="no">№ 01</span> Manuscript</p><h1 id="hero-title">{{.Note.Meta.Title}}</h1></div><p class="lede">Write without distraction — every change stays in your private workspace.</p></section>
+<section class="workspace"><aside class="rail"><svg class="drafting-art rail-art" viewBox="0 0 220 220" aria-hidden="true"><path d="M32 188h156M61 166 108 42l47 124M78 121h60M108 42v124M47 188V74m122 114V74M32 74h30m96 0h30"/><circle cx="108" cy="42" r="10"/></svg><dl class="meta-list"><div><dt>Last edited</dt><dd>{{.Note.ModTime.Format "02 Jan 2006 · 15:04"}}</dd></div><div><dt>Manuscript no.</dt><dd class="mono-sm">{{slice .Note.ID 0 8}}</dd></div><div><dt>Length</dt><dd><span id="live-words">{{wordcount .Note.Body}}</span> words · <span id="live-chars">{{len .Note.Body}}</span> chars</dd></div></dl><p class="muted">A private draft, kept as one plain file. Copy the folder and it travels with you.</p></aside>
+<section class="panel manuscript"><form method="post" action="/notes/{{.Note.ID}}/save"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Title<input name="title" class="title-input" value="{{.Note.Meta.Title}}" maxlength="200" required oninput='try{document.getElementById("hero-title").textContent=this.value||"Untitled"}catch(e){}'></label><label class="check"><input type="checkbox" name="pinned" value="true" {{if .Note.Meta.Pinned}}checked{{end}}> Keep this note pinned to the top</label><label>Body<textarea name="body" rows="22" oninput='try{var v=this.value;document.getElementById("live-words").textContent=v.trim()?v.trim().split(/\s+/).length:0;document.getElementById("live-chars").textContent=v.length}catch(e){}'>{{.Note.Body}}</textarea></label><div class="form-foot"><span class="form-hint">plain text · max 512 KiB</span><button type="submit" class="btn">Save note</button></div></form><form method="post" action="/notes/{{.Note.ID}}/delete" class="danger" onsubmit="return confirm('Permanently delete this note? This cannot be undone.')"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit" class="btn danger-btn">Delete note</button></form></section></section>
 {{end}}`)
 
 var checklistsTmpl = mustSub(`{{define "content"}}
-<header class="page-head"><div><p class="eyebrow">Stay on track</p><h1>Checklists</h1></div><p class="lede">Turn busy thoughts into small, satisfying steps.</p></header>
-<div class="toolbar">
-<form method="post" action="/checklists/new" class="row">
-<input type="hidden" name="csrf" value="{{.CSRF}}">
-<input name="title" placeholder="New checklist title" maxlength="200" required>
-<button type="submit">Create</button>
-</form>
-</div>
-{{if not .Lists}}<p class="empty">No checklists yet.</p>{{end}}
-<div class="checklist-grid">
-{{range $list := .Lists}}
-<section class="card">
-<h2>{{$list.Title}}</h2>
-<form method="post" action="/checklists/{{$list.ID}}/add" class="row">
-<input type="hidden" name="csrf" value="{{$.CSRF}}">
-<input name="text" placeholder="Add item…" maxlength="500" required>
-<button type="submit">Add</button>
-</form>
-<ul class="items">
-{{range .Items}}
-<li class="{{if .Done}}done{{end}}">
-<form method="post" action="/checklists/{{$list.ID}}/toggle/{{.ID}}" class="inline">
-<input type="hidden" name="csrf" value="{{$.CSRF}}">
-<button type="submit" class="linklike" aria-label="Toggle">{{if .Done}}☑{{else}}☐{{end}}</button>
-</form>
-<span>{{.Text}}</span>
-<form method="post" action="/checklists/{{$list.ID}}/items/{{.ID}}/delete" class="inline">
-<input type="hidden" name="csrf" value="{{$.CSRF}}">
-<button type="submit" class="linklike del" aria-label="Delete item">✕</button>
-</form>
-</li>
-{{end}}
-</ul>
-<form method="post" action="/checklists/{{$list.ID}}/delete" class="danger">
-<input type="hidden" name="csrf" value="{{$.CSRF}}">
-<button type="submit">Delete checklist</button>
-</form>
-</section>
-{{end}}
-</div>
+<section class="hero"><div class="hero-head"><p class="eyebrow"><span class="no">№ 02</span> Job Tickets</p><h1>Make room<br>for progress.</h1></div><div class="hero-side"><p class="lede">Turn busy thoughts into small, satisfying steps — then enjoy crossing them off.</p><svg class="drafting-art" viewBox="0 0 220 220" aria-hidden="true"><path d="M40 48h140M40 96h140M40 144h140M40 192h140M56 36v168M108 36v168M160 36v168"/><path d="m66 72 12 12 24-26m48 58 12 12 24-26"/></svg></div></section>
+<section class="workspace"><aside class="rail"><p class="rail-label">A fresh list</p><form method="post" action="/checklists/new"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Checklist title <input name="title" placeholder="What needs doing?" maxlength="200" required></label><button type="submit" class="btn">Create checklist</button></form></aside>
+<div class="panel stack">{{if not .Lists}}<div class="empty"><p class="empty-orn" aria-hidden="true">✳</p><p>No checklists yet.</p><p class="hint">Start with one small step.</p></div>{{end}}{{range $list := .Lists}}<section class="card ticket"><header class="ticket-head"><h2>{{$list.Title}}</h2><span class="count-tag">{{len $list.Items}} items · {{donecount $list.Items}} done</span></header><div class="progress" aria-hidden="true"><i style="width:{{pct $list.Items}}"></i></div><form method="post" action="/checklists/{{$list.ID}}/add" class="add-item"><input type="hidden" name="csrf" value="{{$.CSRF}}"><label class="sr-only">Add an item</label><input name="text" placeholder="Add an item…" maxlength="500" required><button type="submit" class="btn ghost">Add</button></form><ul class="items">{{range $i, $it := $list.Items}}<li class="{{if $it.Done}}done{{end}}"><form method="post" action="/checklists/{{$list.ID}}/toggle/{{$it.ID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit" class="tick" aria-label="Toggle item" aria-pressed="{{$it.Done}}">{{if $it.Done}}<span aria-hidden="true">✓</span>{{end}}</button></form><span class="item-no" aria-hidden="true">{{printf "%02d" (inc $i)}}</span><span class="item-text">{{$it.Text}}</span><form method="post" action="/checklists/{{$list.ID}}/items/{{$it.ID}}/delete" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit" class="linklike del" aria-label="Delete item">×</button></form></li>{{end}}</ul>{{if not $list.Items}}<p class="ticket-empty">Nothing on the list yet — add the first step.</p>{{end}}<form method="post" action="/checklists/{{$list.ID}}/delete" class="danger" onsubmit="return confirm('Permanently delete this checklist and all its items?')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit" class="btn danger-btn">Delete checklist</button></form></section>{{end}}</div></section>
 {{end}}`)
 
 var chatTmpl = mustSub(`{{define "content"}}
-<header class="page-head"><div><p class="eyebrow">A private thread</p><h1>Note to self</h1></div><p class="lede">Send yourself a quick thought now. Find it here whenever you need it.</p></header>
-<div class="toolbar">
-<form method="post" action="/chat/send" class="row">
-<input type="hidden" name="csrf" value="{{.CSRF}}">
-<input name="body" placeholder="Remember to…" maxlength="10240" required autofocus>
-<button type="submit">Send</button>
-</form>
-</div>
-{{if not .Messages}}<p class="empty">No messages yet.</p>{{end}}
-<ul class="chat">
-{{range .Messages}}
-<li><time>{{.Time.Format "2006-01-02 15:04"}}</time><span>{{.Body}}</span></li>
-{{end}}
-</ul>
+<section class="hero"><div class="hero-head"><p class="eyebrow"><span class="no">№ 03</span> The Wire</p><h1>A note<br>to self.</h1></div><div class="hero-side"><p class="lede">Send yourself a quick thought now; find it here whenever you need it.</p><svg class="drafting-art" viewBox="0 0 220 220" aria-hidden="true"><path d="M40 45h140v100H83l-43 36v-36H40z"/><path d="M70 78h80M70 108h52"/><circle cx="174" cy="174" r="17"/><path d="m166 174 6 6 12-15"/></svg></div></section>
+<section class="workspace"><aside class="rail"><p class="rail-label">Leave a message</p><form method="post" action="/chat/send"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Your thought <textarea name="body" rows="6" placeholder="Remember to…" maxlength="10240" required autofocus></textarea></label><button type="submit" class="btn">Send to self</button></form></aside>
+<div class="panel"><div class="panel-head"><h2>Recent thoughts</h2><span class="count-tag">{{len .Messages}} entries{{if eq (len .Messages) 200}} · latest 200{{end}}</span></div>{{if not .Messages}}<div class="empty"><p class="empty-orn" aria-hidden="true">✳</p><p>No messages yet.</p><p class="hint">Leave your future self a note.</p></div>{{end}}<ul class="wire">{{range .Messages}}<li><time datetime="{{.Time.Format "2006-01-02T15:04"}}">{{.Time.Format "02 Jan 2006"}}<br>{{.Time.Format "15:04"}}</time><span class="wire-body">{{.Body}}</span></li>{{end}}</ul></div></section>
 {{end}}`)
 
 var settingsTmpl = mustSub(`{{define "content"}}
-<header class="page-head"><div><p class="eyebrow">Your preferences</p><h1>Settings</h1></div><p class="lede">Keep your account details current and your workspace secure.</p></header>
-<section class="card">
-<h2>Account</h2>
-<form method="post" action="/settings/account">
-<input type="hidden" name="csrf" value="{{.CSRF}}">
-<label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
-<label>Username <input name="username" value="{{.Username}}" maxlength="64" required></label>
-<details><summary>Change password</summary>
-<label>New password (min 12 chars) <input name="new_password" type="password" autocomplete="new-password" minlength="12"></label>
-</details>
-<button type="submit">Save account</button>
-</form>
-</section>
+<section class="hero compact"><div class="hero-head"><p class="eyebrow"><span class="no">№ 04</span> Colophon</p><h1>Quietly<br>yours.</h1></div><p class="lede">Keep your account details current and your workspace secure.</p></section>
+<section class="workspace"><aside class="rail"><svg class="drafting-art rail-art" viewBox="0 0 220 220" aria-hidden="true"><path d="M60 102V67a50 50 0 0 1 100 0v35M45 102h130v82H45z"/><circle cx="110" cy="140" r="11"/><path d="M110 151v18"/></svg><p class="rail-label">Private by design</p><dl class="meta-list"><div><dt>Storage</dt><dd class="mono-sm">{{.DataDir}}</dd></div><div><dt>Database</dt><dd>None — plain files</dd></div><div><dt>Backup</dt><dd>Copy the folder</dd></div></dl><p class="muted">One account, one process, one folder. That is the whole machine.</p></aside>
+<section class="panel narrow"><div class="panel-head"><h2>Account</h2><span class="count-tag">Subscriber</span></div><form method="post" action="/settings/account" class="card form-card"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Current password <input name="current" type="password" autocomplete="current-password" required></label><label>Username <input name="username" value="{{.Username}}" maxlength="64" required></label><details class="pw-details"><summary>Change password</summary><label>New password (min 12 chars) <input name="new_password" type="password" autocomplete="new-password" minlength="12"></label></details><button type="submit" class="btn">Save account</button><p class="form-hint">Saving a new password signs out every other session.</p></form></section></section>
 {{end}}`)
 
-var errorTmpl = template.Must(template.New("page").Parse(`<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="utf-8"><title>Error · mynote</title><style>{{.CSS}}</style></head>
-<body class="centered"><main class="card">
-<h1>{{.Code}}</h1><p>{{.Message}}</p>
-<p><a href="/notes">Back home</a></p>
-</main></body></html>
-`))
+var errorTmpl = template.Must(template.New("page").Parse(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}} · mynote</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&amp;family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&amp;family=Spline+Sans+Mono:ital,wght@0,400..700;1,400..700&amp;display=swap"><style>{{.CSS}}</style></head><body class="centered"><div class="grain" aria-hidden="true"></div><main class="card error-card"><p class="eyebrow">Erratum</p><h1>{{.Code}}</h1><p>{{.Message}}</p><p><a href="/notes" class="btn">Back to the press</a></p></main></body></html>`))
 
 func mustSub(content string) *template.Template {
 	t := template.Must(pageTmpl.Clone())
@@ -932,7 +855,8 @@ func (a *app) renderPage(w http.ResponseWriter, status int, t *template.Template
 		data = map[string]any{}
 	}
 	data["Title"] = title
-	data["CSS"] = a.css()
+	// CSS is embedded from assets.css at compile time and is therefore trusted template content.
+	data["CSS"] = template.CSS(a.css())
 	w.WriteHeader(status)
 	if err := t.Execute(w, data); err != nil {
 		log.Printf("template error: %v", err)
@@ -1020,7 +944,7 @@ func (a *app) clearSessionCookie(w http.ResponseWriter) {
 // ---------- auth handlers ----------
 
 func (a *app) handleLoginPage(w http.ResponseWriter, r *http.Request) {
-	a.renderPage(w, 200, loginTmpl, "Log in", map[string]any{"CSS": a.css(), "Error": ""})
+	a.renderPage(w, 200, loginTmpl, "Log in", map[string]any{"Error": "", "Date": a.now().Format("Monday, 2 January 2006")})
 }
 
 func (a *app) handleLoginPost(w http.ResponseWriter, r *http.Request) {
@@ -1040,7 +964,7 @@ func (a *app) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 		if d := time.Since(start); d < time.Second {
 			time.Sleep(time.Second - d)
 		}
-		a.renderPage(w, 401, loginTmpl, "Log in", map[string]any{"CSS": a.css(), "Error": "Invalid username or password."})
+		a.renderPage(w, 401, loginTmpl, "Log in", map[string]any{"Error": "Invalid username or password.", "Date": a.now().Format("Monday, 2 January 2006")})
 		return
 	}
 	value, _, err := issueSession(a.key, auth, time.Now())
@@ -1088,7 +1012,7 @@ func (a *app) handleNotes(w http.ResponseWriter, r *http.Request) {
 	if notes == nil {
 		notes = []note{}
 	}
-	a.renderSub(w, 200, notesTmpl, "Notes", map[string]any{"Notes": notes, "Query": q, "CSRF": a.currentCSRF(r)})
+	a.renderSub(w, 200, notesTmpl, "Notes", map[string]any{"Notes": notes, "Query": q, "CSRF": a.currentCSRF(r), "Section": "notes"})
 }
 
 func (a *app) handleNoteNew(w http.ResponseWriter, r *http.Request) {
@@ -1124,7 +1048,7 @@ func (a *app) handleNote(w http.ResponseWriter, r *http.Request) {
 		a.renderError(w, 500, "Could not load the note.")
 		return
 	}
-	a.renderSub(w, 200, noteTmpl, n.Meta.Title, map[string]any{"Note": n, "CSRF": a.currentCSRF(r)})
+	a.renderSub(w, 200, noteTmpl, n.Meta.Title, map[string]any{"Note": n, "CSRF": a.currentCSRF(r), "Section": "notes"})
 }
 
 func (a *app) handleNoteSave(w http.ResponseWriter, r *http.Request) {
@@ -1198,7 +1122,7 @@ func (a *app) handleChecklists(w http.ResponseWriter, r *http.Request) {
 	if lists == nil {
 		lists = []checklist{}
 	}
-	a.renderSub(w, 200, checklistsTmpl, "Checklists", map[string]any{"Lists": lists, "CSRF": a.currentCSRF(r)})
+	a.renderSub(w, 200, checklistsTmpl, "Checklists", map[string]any{"Lists": lists, "CSRF": a.currentCSRF(r), "Section": "checklists"})
 }
 
 func (a *app) handleChecklistNew(w http.ResponseWriter, r *http.Request) {
@@ -1341,7 +1265,7 @@ func (a *app) handleChat(w http.ResponseWriter, r *http.Request) {
 	for i := range msgs {
 		msgs[i].Time = msgs[i].Time.In(a.loc)
 	}
-	a.renderSub(w, 200, chatTmpl, "Chat", map[string]any{"Messages": msgs, "CSRF": a.currentCSRF(r)})
+	a.renderSub(w, 200, chatTmpl, "Chat", map[string]any{"Messages": msgs, "CSRF": a.currentCSRF(r), "Section": "chat"})
 }
 
 func (a *app) handleChatSend(w http.ResponseWriter, r *http.Request) {
@@ -1370,7 +1294,7 @@ func (a *app) handleChatSend(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) handleSettings(w http.ResponseWriter, r *http.Request) {
 	auth, _ := a.authFrom(r)
-	a.renderSub(w, 200, settingsTmpl, "Settings", map[string]any{"Username": auth.Username, "CSRF": a.currentCSRF(r)})
+	a.renderSub(w, 200, settingsTmpl, "Settings", map[string]any{"Username": auth.Username, "DataDir": a.cfg.dataDir, "CSRF": a.currentCSRF(r), "Section": "settings"})
 }
 
 func (a *app) handleSettingsPost(w http.ResponseWriter, r *http.Request) {
