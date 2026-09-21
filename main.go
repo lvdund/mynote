@@ -618,12 +618,12 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!DOCTYPE html>
 <body>
 <header>
 <nav>
-<a href="/notes" class="brand">mynote</a>
+<a href="/notes" class="brand"><span class="brand-mark"></span>mynote</a>
 <a href="/notes">Notes</a>
 <a href="/checklists">Checklists</a>
 <a href="/chat">Chat</a>
 <a href="/settings">Settings</a>
-<form method="post" action="/logout" class="inline"><button type="submit" class="linklike">Log out</button></form>
+<form method="post" action="/logout" class="inline nav-logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit" class="linklike">Log out</button></form>
 </nav>
 </header>
 <main>
@@ -642,14 +642,17 @@ var loginTmpl = template.Must(template.New("page").Funcs(template.FuncMap{"safeC
 <style>{{.CSS}}</style>
 </head>
 <body class="centered">
-<main class="card">
-<h1>mynote</h1>
+<main class="login-shell">
+<section class="login-art"><a class="brand" href="/login"><span class="brand-mark"></span>mynote</a><div><h2>Your thoughts, in one place.</h2><p>A quiet, private space for notes, lists, and the things you want to remember.</p></div><div class="orbit" aria-hidden="true"></div></section>
+<section class="login-form">
+<p class="eyebrow">Private workspace</p><h1>Welcome back.</h1><p class="lede">Sign in to continue to your notes.</p>
 {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
 <form method="post" action="/login">
 <label>Username <input name="username" autofocus autocomplete="username" required></label>
 <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
 <button type="submit">Log in</button>
 </form>
+</section>
 </main>
 </body>
 </html>
@@ -658,7 +661,8 @@ var loginTmpl = template.Must(template.New("page").Funcs(template.FuncMap{"safeC
 var tmplFuncs = template.FuncMap{}
 
 var notesTmpl = mustSub(`{{define "content"}}
-<h1>Notes</h1>
+<header class="page-head"><div><p class="eyebrow">Your workspace</p><h1>Notes</h1></div><p class="lede">Ideas, plans, and passing thoughts—kept private and close at hand.</p></header>
+<div class="toolbar">
 <form method="post" action="/notes/new" class="row">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <input name="title" placeholder="New note title" maxlength="200" required>
@@ -667,20 +671,23 @@ var notesTmpl = mustSub(`{{define "content"}}
 <form method="get" action="/notes" class="row">
 <input name="q" value="{{.Query}}" placeholder="Search notes…">
 <button type="submit">Search</button>
-{{if .Query}}<a href="/notes">Clear</a>{{end}}
+{{if .Query}}<a href="/notes" class="clear-link">Clear</a>{{end}}
 </form>
+</div>
+<div class="section-label"><h2>{{if .Query}}Search results{{else}}All notes{{end}}</h2><span>{{len .Notes}} entries</span></div>
 {{if not .Notes}}<p class="empty">No notes{{if .Query}} matching “{{.Query}}”{{end}}.</p>{{end}}
 <ul class="notes">
 {{range .Notes}}
-<li><a href="/notes/{{.ID}}">{{if .Meta.Pinned}}📌 {{end}}{{.Meta.Title}}</a>
+<li><a href="/notes/{{.ID}}">{{.Meta.Title}}{{if .Meta.Pinned}}<span class="pin">Pinned</span>{{end}}</a>
  <span class="muted">{{.ModTime.Format "2006-01-02 15:04"}}</span></li>
 {{end}}
 </ul>
 {{end}}`)
 
 var noteTmpl = mustSub(`{{define "content"}}
-<h1>{{if .Note.Meta.Pinned}}📌 {{end}}{{.Note.Meta.Title}}</h1>
-<form method="post" action="/notes/{{.Note.ID}}/save">
+<header class="page-head"><div><p class="eyebrow">Note editor</p><h1>{{.Note.Meta.Title}}</h1></div><p class="lede">Write without distraction. Changes stay in your private workspace.</p></header>
+<section class="editor"><form method="post" action="/notes/{{.Note.ID}}/save">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
 <label>Title <input name="title" value="{{.Note.Meta.Title}}" maxlength="200" required></label>
 <label class="check"><input type="checkbox" name="pinned" value="true" {{if .Note.Meta.Pinned}}checked{{end}}> Pinned</label>
 <textarea name="body" rows="20">{{.Note.Body}}</textarea>
@@ -690,21 +697,25 @@ var noteTmpl = mustSub(`{{define "content"}}
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <button type="submit">Delete note</button>
 </form>
+</section>
 {{end}}`)
 
 var checklistsTmpl = mustSub(`{{define "content"}}
-<h1>Checklists</h1>
+<header class="page-head"><div><p class="eyebrow">Stay on track</p><h1>Checklists</h1></div><p class="lede">Turn busy thoughts into small, satisfying steps.</p></header>
+<div class="toolbar">
 <form method="post" action="/checklists/new" class="row">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <input name="title" placeholder="New checklist title" maxlength="200" required>
 <button type="submit">Create</button>
 </form>
+</div>
 {{if not .Lists}}<p class="empty">No checklists yet.</p>{{end}}
+<div class="checklist-grid">
 {{range $list := .Lists}}
 <section class="card">
 <h2>{{$list.Title}}</h2>
 <form method="post" action="/checklists/{{$list.ID}}/add" class="row">
-<input type="hidden" name="csrf" value="$.CSRF">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
 <input name="text" placeholder="Add item…" maxlength="500" required>
 <button type="submit">Add</button>
 </form>
@@ -712,32 +723,35 @@ var checklistsTmpl = mustSub(`{{define "content"}}
 {{range .Items}}
 <li class="{{if .Done}}done{{end}}">
 <form method="post" action="/checklists/{{$list.ID}}/toggle/{{.ID}}" class="inline">
-<input type="hidden" name="csrf" value="$.CSRF">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
 <button type="submit" class="linklike" aria-label="Toggle">{{if .Done}}☑{{else}}☐{{end}}</button>
 </form>
 <span>{{.Text}}</span>
 <form method="post" action="/checklists/{{$list.ID}}/items/{{.ID}}/delete" class="inline">
-<input type="hidden" name="csrf" value="$.CSRF">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
 <button type="submit" class="linklike del" aria-label="Delete item">✕</button>
 </form>
 </li>
 {{end}}
 </ul>
 <form method="post" action="/checklists/{{$list.ID}}/delete" class="danger">
-<input type="hidden" name="csrf" value="$.CSRF">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
 <button type="submit">Delete checklist</button>
 </form>
 </section>
 {{end}}
+</div>
 {{end}}`)
 
 var chatTmpl = mustSub(`{{define "content"}}
-<h1>Chat with yourself</h1>
+<header class="page-head"><div><p class="eyebrow">A private thread</p><h1>Note to self</h1></div><p class="lede">Send yourself a quick thought now. Find it here whenever you need it.</p></header>
+<div class="toolbar">
 <form method="post" action="/chat/send" class="row">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <input name="body" placeholder="Remember to…" maxlength="10240" required autofocus>
 <button type="submit">Send</button>
 </form>
+</div>
 {{if not .Messages}}<p class="empty">No messages yet.</p>{{end}}
 <ul class="chat">
 {{range .Messages}}
@@ -747,7 +761,7 @@ var chatTmpl = mustSub(`{{define "content"}}
 {{end}}`)
 
 var settingsTmpl = mustSub(`{{define "content"}}
-<h1>Settings</h1>
+<header class="page-head"><div><p class="eyebrow">Your preferences</p><h1>Settings</h1></div><p class="lede">Keep your account details current and your workspace secure.</p></header>
 <section class="card">
 <h2>Account</h2>
 <form method="post" action="/settings/account">
