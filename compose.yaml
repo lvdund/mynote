@@ -1,0 +1,22 @@
+services:
+  mynote:
+    build: .
+    image: mynote:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Bootstrap only: used the first time, when no account exists yet.
+      MYNOTE_USERNAME: ${MYNOTE_USERNAME:?set in .env}
+      MYNOTE_PASSWORD: ${MYNOTE_PASSWORD:?set in .env}
+      # Set to "true" when served through an HTTPS reverse proxy.
+      MYNOTE_COOKIE_SECURE: ${MYNOTE_COOKIE_SECURE:-false}
+      MYNOTE_TIMEZONE: ${MYNOTE_TIMEZONE:-UTC}
+    # Harden (optional): run as a fixed non-root identity instead of root.
+    # The data directory must be writable by this UID/GID, e.g.
+    #   sudo chown -R 65532:65532 ./volumn
+    # user: "65532:65532"
+    volumes:
+      # Default: the local ./volumn folder of this repo. Point
+      # MYNOTE_DATA_PATH at any host directory or a named volume instead.
+      - ${MYNOTE_DATA_PATH:-./volumn}:/data
